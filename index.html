@@ -1,4 +1,6 @@
 <!--
+    v4.5.3 - 2026-04-07 10:50 PM: [FIX] Full ID Normalization for module and user IDs to ensure perfect score synchronization. Added 'IN PROGRESS' label to clarify 0% scores.
+    v4.5.2 - 2026-04-07 10:35 PM: [FIX] Resolved 0% score mismatch in Teacher Dashboard. Metrics now correctly distinguish 'IN PROGRESS' vs '0%'. Backend (v3.9.5) ensures highest score is always preserved.
     v4.5.1 - 2026-04-07 07:55 PM: [FIX] Resolved 'Start Quiz' unresponsiveness by reordering DOM attachment and listener registration. Improved data integrity by showing HIGHEST score for students with multiple attempts. FIXED CSV Gender column and sorting.
     v4.5.0 - 2026-04-07 07:35 PM: [FEATURE] Upload Module now includes Step 4 to Enable/Disable module on post (default: disabled). [FIX] Eliminated 'null%' from Leaderboards by defaulting to 0%.
     v4.4.2 - 2026-04-07 07:15 PM: [FIX] Eliminated 'null%' scores in results. [ENHANCEMENT] Precision Monitoring: Tagged Copy/Paste as 'CRITICAL' alerts. Replaced 'DATA' label with 'SECURE/ACTIVITY/HIGH RISK' based on alert severity. Enhanced Monitoring Report with critical highlights.
@@ -3808,8 +3810,8 @@
                     // Flatten Data for this Module
                     let rows = [];
                     Object.keys(allProg).forEach(rawUserId => {
-                        const userId = String(rawUserId).trim();
-                        const entry = allProg[rawUserId][cleanModId];
+                        const userId = String(rawUserId).trim().toLowerCase();
+                        const entry = allProg[rawUserId][cleanModId.toLowerCase()];
                         
                         if (entry && (entry.score !== null || entry.points || entry.timestamp)) {
                             // Name Fallback: If progress sheet has no name, look up in students list
@@ -3902,10 +3904,12 @@
                                 }
                                                         </td>
                                                         <td class="px-4 py-3 text-center">
-                                                            <div class="flex flex-col items-center">
-                                                                <span class="${(r.score || 0) >= 75 ? 'text-green-700 bg-green-50' : 'text-red-700 bg-red-50'} px-2 py-0.5 rounded font-bold text-xs">${r.score !== null ? r.score + '%' : '0%'}</span>
-                                                                <span class="text-xs text-slate-500 font-bold mt-1">${r.points}</span>
-                                                            </div>
+                                                                <div class="flex flex-col items-center">
+                                                                    <span class="${r.score !== null ? (r.score >= 75 ? 'text-green-700 bg-green-50' : 'text-red-700 bg-red-50') : 'text-brand-700 bg-brand-50'} px-2 py-0.5 rounded font-bold text-[10px]">
+                                                                        ${r.score !== null ? r.score + '%' : 'IN PROGRESS'}
+                                                                    </span>
+                                                                    <span class="text-[10px] text-slate-500 font-bold mt-1">${r.points || '—'}</span>
+                                                                </div>
                                                         </td>
                                                         <td class="px-4 py-3 text-right">
                                                             <button onclick="app.components.showMonitoringReport('${r.id}', '${modId}')" class="bg-brand-50 text-brand-600 px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-brand-100 transition-all flex items-center gap-1 ml-auto">
