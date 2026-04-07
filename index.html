@@ -1,4 +1,7 @@
 <!--
+    v4.4.0 - 2026-04-07 06:40 PM: [FEATURE] Introduced 'Time Banking' mechanics; quiz now uses a Global Time Pool where saved time from quick answers can be used for backtracking and review. Redesigned Rules screen.
+    v4.3.1 - 2026-04-07 06:30 PM: [FEATURE] Implemented 'Sticky Timers' for backtracking; remaining time per question is now saved and never resets when navigating between questions. Added 'Time Expired' lock state.
+    v4.3.0 - 2026-04-07 06:15 PM: [FEATURE] Overhauled quiz system with backtracking (Prev/Next buttons) and selection-confirmation mode to prevent accidental submissions. Added class-wide Top 5 leaderboard. Fixed 'NaN' score corruption.
     v4.2.2 - 2026-04-07 03:16 PM: [FIX] Strictly filtered Class Activity to only show currently online (LIVE) students for real-time monitoring.
     v4.2.1 - 2026-04-07 03:08 PM: [FIX] Removed hardcoded API_URL fallback to prevent content mirroring when sharing the standalone HTML file.
     v4.2.0 - 2026-04-07 12:36 PM: [FEATURE] Refactored quiz timer to use a single constant (QUIZ_DURATION) for easier updates; increased default time to 60s.
@@ -2977,24 +2980,30 @@
                         }
                     });
                     leaderboard.sort((a, b) => b.score - a.score);
-                    const top3 = leaderboard.slice(0, 3);
+                    const top5 = leaderboard.slice(0, 5);
 
                     // 2. Leaderboard HTML
                     let leaderboardHtml = '';
-                    if (top3.length > 0) {
+                    if (top5.length > 0) {
                         leaderboardHtml = `
                                 <div class="mt-6">
                                     <h4 class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3">Top Performers</h4>
-                                    <div class="grid grid-cols-3 gap-2">
-                                        ${top3.map((p, idx) => {
-                            const medals = ['🥇', '🥈', '🥉'];
-                            const colors = ['bg-yellow-100 text-yellow-700 border-yellow-200', 'bg-slate-100 text-slate-700 border-slate-200', 'bg-orange-100 text-orange-800 border-orange-200'];
+                                    <div class="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                                        ${top5.map((p, idx) => {
+                            const medals = ['🥇', '🥈', '🥉', '🏅', '🏅'];
+                            const colors = [
+                                'bg-yellow-100 text-yellow-700 border-yellow-200', 
+                                'bg-slate-100 text-slate-700 border-slate-200', 
+                                'bg-orange-100 text-orange-800 border-orange-200',
+                                'bg-brand-50 text-brand-700 border-brand-100',
+                                'bg-brand-50 text-brand-700 border-brand-100'
+                            ];
                             return `
                                                 <div class="flex flex-col items-center p-2 rounded-xl border ${colors[idx] || 'bg-white border-slate-100'}">
-                                                    <div class="text-2xl mb-1">${medals[idx] || ''}</div>
-                                                    <div class="text-[10px] font-bold uppercase tracking-wider opacity-70">Rank ${idx + 1}</div>
-                                                    <div class="font-bold text-sm truncate w-full text-center">${p.name}</div>
-                                                    <div class="text-xs font-mono font-bold mt-1">${p.score}%</div>
+                                                    <div class="text-xl mb-1">${medals[idx] || ''}</div>
+                                                    <div class="text-[9px] font-bold uppercase tracking-wider opacity-60">Rank ${idx + 1}</div>
+                                                    <div class="font-bold text-[11px] truncate w-full text-center">${p.name}</div>
+                                                    <div class="text-[11px] font-mono font-bold mt-1">${p.score}%</div>
                                                 </div>
                                             `;
                         }).join('')}
@@ -3015,7 +3024,7 @@
                             `;
                     } else {
                         const canRetake = (app.state.data.settings['pref_allow_retake'] !== 'false');
-                        const score = (prog.score !== null) ? Number(prog.score) : null;
+                        const score = (prog.score !== null && prog.score !== "" && !isNaN(prog.score)) ? Number(prog.score) : null;
                         const attempts = Number(prog.attempts || 0);
 
                         if (score !== null) {
@@ -3774,7 +3783,7 @@
                         const userId = String(rawUserId).trim();
                         const entry = allProg[rawUserId][cleanModId];
                         
-                        if (entry && entry.score !== null && entry.score !== undefined) {
+                        if (entry && (entry.score !== null || entry.points || entry.timestamp)) {
                             // Name Fallback: If progress sheet has no name, look up in students list
                             let studentName = entry.name;
                             if (!studentName || studentName === 'Anonymous') {
@@ -6938,7 +6947,11 @@
 
                     // Track original indices for item analysis
                     const originalQuizData = mod.quiz.map((q, idx) => ({ ...q, originalIndex: idx }));
-                    app.state.currentQuizResults = new Array(originalQuizData.length).fill(0);
+                    app.state.currentQuizResults = new Array(originalQuizData.length).fill(null);
+                    const userAnswers = new Array(originalQuizData.length).fill(null);
+                    
+                    let totalTimeRemaining = originalQuizData.length * QUIZ_DURATION;
+                    let quizGlobalTimer;
 
                     const quizData = shuffleArray(JSON.parse(JSON.stringify(originalQuizData))).map(q => {
                         const optionsWithIndex = q.options.map((opt, idx) => ({ text: opt, isCorrect: idx === q.a }));
@@ -6951,15 +6964,26 @@
                     });
 
                     let currentQ = 0;
-                    let score = 0;
-                    let questionTimer;
-                    let timeRemaining;
+                    let questionTimer; // Legacy ref - will be used for quizGlobalTimer wrapper
+                    
+                    const formatTime = (seconds) => {
+                        const m = Math.floor(seconds / 60);
+                        const s = seconds % 60;
+                        return `${m}:${s.toString().padStart(2, '0')}`;
+                    };
 
                     const renderQ = () => {
                         if (currentQ >= quizData.length) {
-                            // Handle empty quiz case to prevent NaN
-                            const finalScore = quizData.length > 0 ? Math.round((score / quizData.length) * 100) : 0;
-                            const pointsStr = score + '/' + quizData.length;
+                             // Final Score Calculation
+                            let finalScoreVal = 0;
+                            quizData.forEach((qd, idx) => {
+                                const isCorrect = userAnswers[idx] === qd.a;
+                                app.state.currentQuizResults[qd.originalIndex] = isCorrect ? 1 : 0;
+                                if (isCorrect) finalScoreVal++;
+                            });
+
+                            const finalScore = quizData.length > 0 ? Math.round((finalScoreVal / quizData.length) * 100) : 0;
+                            const pointsStr = finalScoreVal + '/' + quizData.length;
                             const analysisStr = JSON.stringify(app.state.currentQuizResults);
 
                             // Show Processing UI immediately
@@ -7034,14 +7058,12 @@
                         const qEl = document.createElement('div');
                         qEl.className = "bg-white w-full max-w-md max-h-[90vh] flex flex-col rounded-2xl p-6 shadow-2xl relative overflow-hidden animate-[scaleIn_0.3s_ease]";
 
-                        timeRemaining = QUIZ_DURATION;
-
                         qEl.innerHTML = `
                                 <div class="flex justify-between items-center mb-4 text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0">
                                     <span>Question ${currentQ + 1}/${quizData.length}</span>
-                                    <div class="flex items-center gap-2 text-brand-600 bg-brand-50 px-3 py-1 rounded-full">
-                                        <i class="ph-bold ph-timer"></i>
-                                        <span id="timer-display">${QUIZ_DURATION}</span>s
+                                    <div class="flex items-center gap-2 text-brand-600 bg-brand-50 px-3 py-1 rounded-full border border-brand-100">
+                                        <i class="ph-bold ph-hourglass-high"></i>
+                                        <span id="timer-display" class="font-mono">${formatTime(totalTimeRemaining)}</span>
                                     </div>
                                     <div class="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-red-50 text-red-600 animate-pulse">
                                         <div class="w-2 h-2 rounded-full bg-red-600"></div>
@@ -7051,71 +7073,79 @@
                                 
                                 <div class="overflow-y-auto flex-1 pr-2 [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:bg-slate-300 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full">
                                     <h4 class="text-lg font-bold text-slate-800 mb-6">${q.q}</h4>
-                                    <div class="space-y-3 pb-2" id="options-container">
+                                    <div class="space-y-3 pb-4" id="options-container">
                                         ${q.options.map((opt, idx) => `
-                                            <button class="opt-btn w-full text-left p-4 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors font-medium text-slate-700" data-idx="${idx}">
+                                            <button class="opt-btn w-full text-left p-4 rounded-xl border ${userAnswers[currentQ] === idx ? 'border-brand-500 bg-brand-50 text-brand-700 font-bold' : 'border-slate-200'} hover:bg-slate-50 transition-all text-slate-700" data-idx="${idx}">
                                                 ${opt}
                                             </button>
                                         `).join('')}
                                     </div>
                                 </div>
-                            `;
 
-                        const timerDisplay = qEl.querySelector('#timer-display');
-                        questionTimer = setInterval(() => {
-                            timeRemaining--;
-                            timerDisplay.textContent = timeRemaining;
-                            if (timeRemaining <= 10) {
-                                timerDisplay.parentElement.classList.replace('text-brand-600', 'text-red-600');
-                                timerDisplay.parentElement.classList.replace('bg-brand-50', 'bg-red-50');
-                            }
-                            if (timeRemaining <= 0) {
-                                clearInterval(questionTimer);
-                                // Auto-proceed logic (as if incorrect, so score does not increase)
-                                qEl.querySelectorAll('.opt-btn').forEach(b => b.disabled = true);
-                                // Record timeout as 0 (incorrect) at the original question index
-                                app.state.currentQuizResults[q.originalIndex] = 0;
-                                setTimeout(() => {
-                                    currentQ++;
-                                    renderQ();
-                                }, 1000);
-                            }
-                        }, 1000);
-                        // Save timer reference globally for emergency cancel
-                        window._quizTimer = questionTimer;
+                                <div class="flex gap-3 pt-4 border-t border-slate-100 shrink-0">
+                                    <button id="prev-q" class="flex-1 py-3.5 rounded-xl font-bold bg-slate-100 text-slate-600 hover:bg-slate-200 transition-all disabled:opacity-30" ${currentQ === 0 ? 'disabled' : ''}>
+                                        Back
+                                    </button>
+                                    <button id="next-q" class="flex-[2] py-3.5 rounded-xl font-bold bg-brand-600 text-white shadow-lg hover:bg-brand-700 transition-all">
+                                        ${currentQ === quizData.length - 1 ? 'Finish & Submit' : 'Next'}
+                                    </button>
+                                </div>
+                            `;
 
                         qEl.querySelectorAll('.opt-btn').forEach(btn => {
                             btn.onclick = function () {
-                                clearInterval(questionTimer);
-                                // Disable all buttons to prevent double click
-                                qEl.querySelectorAll('.opt-btn').forEach(b => b.disabled = true);
-
-                                const selected = parseInt(this.dataset.idx);
-                                const isCorrect = selected === q.a;
-
-                                // Record item result (1 for correct, 0 for incorrect) at the original question index
-                                app.state.currentQuizResults[q.originalIndex] = isCorrect ? 1 : 0;
-
-                                // Silent Score Update
-                                if (isCorrect) {
-                                    score++;
-                                }
-
-                                // Neutral Selection styling
+                                const idx = parseInt(this.dataset.idx);
+                                userAnswers[currentQ] = idx;
+                                
+                                qEl.querySelectorAll('.opt-btn').forEach(b => {
+                                    b.classList.remove('border-brand-500', 'bg-brand-50', 'text-brand-700', 'font-bold');
+                                    b.classList.add('border-slate-200');
+                                });
                                 this.classList.replace('border-slate-200', 'border-brand-500');
-                                this.classList.replace('hover:bg-slate-50', 'bg-brand-50');
-                                this.classList.add('text-brand-700');
-
-                                // Short delay before next question
-                                setTimeout(() => {
-                                    currentQ++;
-                                    renderQ();
-                                }, 500);
+                                this.classList.add('bg-brand-50', 'text-brand-700', 'font-bold');
                             }
                         });
 
+                        document.getElementById('prev-q').onclick = () => {
+                            currentQ--;
+                            renderQ();
+                        };
+
+                        document.getElementById('next-q').onclick = () => {
+                            if (currentQ < quizData.length - 1) {
+                                currentQ++;
+                                renderQ();
+                            } else {
+                                clearInterval(quizGlobalTimer);
+                                currentQ++; // This triggers the final calculation in renderQ at currentQ >= length
+                                renderQ();
+                            }
+                        };
+
                         modal.innerHTML = '';
                         modal.appendChild(qEl);
+                    };
+
+                    // ---- GLOBAL TIMER WRAPPER ----
+                    const startGlobalTimer = () => {
+                        quizGlobalTimer = setInterval(() => {
+                            totalTimeRemaining--;
+                            const display = document.getElementById('timer-display');
+                            if (display) display.textContent = formatTime(totalTimeRemaining);
+
+                            if (totalTimeRemaining <= 30) {
+                                if (display) display.parentElement.classList.replace('text-brand-600', 'text-red-500');
+                                if (display) display.parentElement.classList.replace('bg-brand-50', 'bg-red-50');
+                            }
+
+                            if (totalTimeRemaining <= 0) {
+                                clearInterval(quizGlobalTimer);
+                                // FORCE AUTO-SUBMIT
+                                currentQ = quizData.length;
+                                renderQ();
+                            }
+                        }, 1000);
+                        window._quizTimer = quizGlobalTimer;
                     };
 
                     // Start Screen
@@ -7129,20 +7159,32 @@
                                 
                                 <ul class="text-left space-y-4 mb-8 bg-slate-50 p-6 rounded-xl border border-slate-100">
                                     <li class="flex items-start gap-3">
-                                        <i class="ph-fill ph-check-circle text-brand-500 mt-1 text-lg"></i>
-                                        <span class="text-sm text-slate-700 font-medium"><strong>No Cheating:</strong> Do not open other tabs, windows, or devices. Focus on your screen.</span>
+                                        <i class="ph-fill ph-clock-countdown text-brand-500 mt-1 text-lg"></i>
+                                        <div class="text-sm">
+                                            <p class="text-slate-800 font-bold">Automatic Time Banking</p>
+                                            <p class="text-slate-500 leading-tight">Every second saved is yours. Quick answers add to your global "time bank" for backtracking and harder questions.</p>
+                                        </div>
                                     </li>
                                     <li class="flex items-start gap-3">
-                                        <i class="ph-fill ph-check-circle text-brand-500 mt-1 text-lg"></i>
-                                        <span class="text-sm text-slate-700 font-medium"><strong>Closed Notes:</strong> No reading of notes, study materials, or books.</span>
+                                        <i class="ph-fill ph-arrows-left-right text-brand-500 mt-1 text-lg"></i>
+                                        <div class="text-sm">
+                                            <p class="text-slate-800 font-bold">Dynamic Backtracking</p>
+                                            <p class="text-slate-500 leading-tight">Review and change your answers as much as you like, as long as your total "time bank" has seconds remaining.</p>
+                                        </div>
                                     </li>
                                     <li class="flex items-start gap-3">
-                                        <i class="ph-fill ph-check-circle text-brand-500 mt-1 text-lg"></i>
-                                        <span class="text-sm text-slate-700 font-medium"><strong>No Sharing:</strong> Taking the ${modType.toLowerCase()} is a solo activity. Do not share answers with your classmates.</span>
+                                        <i class="ph-fill ph-shield-check text-brand-500 mt-1 text-lg"></i>
+                                        <div class="text-sm">
+                                            <p class="text-slate-800 font-bold">Selection Confidence</p>
+                                            <p class="text-slate-500 leading-tight">Click an option to highlight it; click "Next" or "Finish" to proceed. This prevents accidental submissions on touch screens.</p>
+                                        </div>
                                     </li>
                                     <li class="flex items-start gap-3">
-                                        <i class="ph-fill ph-check-circle text-brand-500 mt-1 text-lg"></i>
-                                        <span class="text-sm text-slate-700 font-medium"><strong>Time Limit:</strong> You have <strong>${QUIZ_DURATION} seconds</strong> per question! You cannot go back to previous questions.</span>
+                                        <i class="ph-fill ph-fire text-brand-500 mt-1 text-lg"></i>
+                                        <div class="text-sm">
+                                            <p class="text-slate-800 font-bold">Critical Lock</p>
+                                            <p class="text-slate-500 leading-tight">When the global timer hits zero, the quiz will auto-submit exactly as it is. No extra time will be provided.</p>
+                                        </div>
                                     </li>
                                 </ul>
                                 
@@ -7150,8 +7192,8 @@
                                     <button onclick="document.getElementById('modal-overlay').classList.add('hidden')" class="flex-1 px-4 py-3 bg-slate-100 text-slate-600 font-bold rounded-xl hover:bg-slate-200 transition-colors">
                                         Cancel
                                     </button>
-                                    <button id="btn-start-quiz" class="flex-[2] px-4 py-3 bg-brand-600 text-white font-bold rounded-xl shadow-lg shadow-brand-500/30 hover:bg-brand-700 transition-all uppercase tracking-wider relative overflow-hidden group">
-                                        <span class="relative z-10 flex items-center justify-center gap-2">I Understand, Start! <i class="ph-bold ph-arrow-right"></i></span>
+                                    <button id="btn-start-quiz" class="flex-[2] px-4 py-3 bg-slate-900 text-white font-bold rounded-xl hover:bg-slate-800 transition-all shadow-lg hover:translate-y-[-2px] active:translate-y-0">
+                                        Start Quiz
                                     </button>
                                 </div>
                             </div>
@@ -7160,6 +7202,7 @@
                     document.getElementById('btn-start-quiz').onclick = () => {
                         // Start Monitoring background process only when quiz starts
                         MonitorService.start(modId, baselinePhoto, existingStream);
+                        startGlobalTimer();
                         renderQ();
                     };
                 },
