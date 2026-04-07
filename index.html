@@ -1,4 +1,5 @@
 <!--
+    v4.5.0 - 2026-04-07 07:35 PM: [FEATURE] Upload Module now includes Step 4 to Enable/Disable module on post (default: disabled). [FIX] Eliminated 'null%' from Leaderboards by defaulting to 0%.
     v4.4.2 - 2026-04-07 07:15 PM: [FIX] Eliminated 'null%' scores in results. [ENHANCEMENT] Precision Monitoring: Tagged Copy/Paste as 'CRITICAL' alerts. Replaced 'DATA' label with 'SECURE/ACTIVITY/HIGH RISK' based on alert severity. Enhanced Monitoring Report with critical highlights.
     v4.4.1 - 2026-04-07 07:05 PM: [FIX] Simplified quiz rules UI for better mobile/screen fit. Fixed 'Start Quiz' button wiring issue. Added periodic heartbeat to MonitorService to ensure students appear in 'Class Activity' monitor.
     v4.4.0 - 2026-04-07 06:40 PM: [FEATURE] Introduced 'Time Banking' mechanics; quiz now uses a Global Time Pool where saved time from quick answers can be used for backtracking and review. Redesigned Rules screen.
@@ -1097,6 +1098,7 @@
                         quarter: fd.get('quarter') || 'Term 1',
                         modType: fd.get('modType') || 'Quiz',
                         expiration: fd.get('expiration') || '',
+                        isActive: fd.get('isActive') === 'on' || fd.get('isActive') === true,
                         youtubeUrl: ''
                     };
 
@@ -3014,7 +3016,7 @@
                                                     <div class="text-xl mb-1">${medals[idx] || ''}</div>
                                                     <div class="text-[9px] font-bold uppercase tracking-wider opacity-60">Rank ${idx + 1}</div>
                                                     <div class="font-bold text-[11px] truncate w-full text-center">${p.name}</div>
-                                                    <div class="text-[11px] font-mono font-bold mt-1">${p.score}%</div>
+                                                    <div class="text-[11px] font-mono font-bold mt-1">${(p.score || 0)}%</div>
                                                 </div>
                                             `;
                         }).join('')}
@@ -3227,6 +3229,20 @@
                                         </button>
                                     </div>
                                     <input type="file" name="quizFile" accept=".csv" class="w-full p-2 rounded-xl bg-white border border-slate-200 text-sm file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-accent-50 file:text-accent-700 hover:file:bg-accent-100">
+                                </div>
+
+                                <div class="border-t border-slate-100 pt-2 mt-2"></div>
+
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-500 uppercase mb-3">4. Enable Module</label>
+                                    <label class="relative inline-flex items-center cursor-pointer group">
+                                        <input type="checkbox" name="isActive" class="sr-only peer">
+                                        <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-brand-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-600"></div>
+                                        <span class="ml-3 text-xs font-bold text-slate-500 peer-checked:text-brand-600 transition-colors">Visible to Students</span>
+                                    </label>
+                                    <p class="text-[10px] text-slate-400 mt-2 italic flex items-center gap-1">
+                                        <i class="ph ph-info"></i> If disabled, the module will be hidden from everyone except the teacher.
+                                    </p>
                                 </div>
 
                                 <!-- Upload Progress Bar (hidden until upload starts) -->
@@ -4909,9 +4925,9 @@
                             recentActivityHtml = prog.map(rm => {
                                 let gradeHtml = '';
                                 if (rm.score !== null && rm.appGrade !== null) {
-                                    const avg = Math.round((rm.score + rm.appGrade) / 2);
+                                    const avg = Math.round(((rm.score || 0) + (rm.appGrade || 0)) / 2);
                                     gradeHtml = `
-                                            <div class="text-[10px] text-slate-400 font-medium whitespace-nowrap">Quiz: ${rm.score}% &bull; Act: ${rm.appGrade}%</div>
+                                            <div class="text-[10px] text-slate-400 font-medium whitespace-nowrap">Quiz: ${(rm.score || 0)}% &bull; Act: ${(rm.appGrade || 0)}%</div>
                                             <div class="text-xs font-bold text-green-600 mt-0.5">${avg}% (Avg)</div>
                                         `;
                                 } else if (rm.appGrade !== null) {
