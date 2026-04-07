@@ -1,4 +1,5 @@
 <!--
+    v4.5.1 - 2026-04-07 07:55 PM: [FIX] Resolved 'Start Quiz' unresponsiveness by reordering DOM attachment and listener registration. Improved data integrity by showing HIGHEST score for students with multiple attempts. FIXED CSV Gender column and sorting.
     v4.5.0 - 2026-04-07 07:35 PM: [FEATURE] Upload Module now includes Step 4 to Enable/Disable module on post (default: disabled). [FIX] Eliminated 'null%' from Leaderboards by defaulting to 0%.
     v4.4.2 - 2026-04-07 07:15 PM: [FIX] Eliminated 'null%' scores in results. [ENHANCEMENT] Precision Monitoring: Tagged Copy/Paste as 'CRITICAL' alerts. Replaced 'DATA' label with 'SECURE/ACTIVITY/HIGH RISK' based on alert severity. Enhanced Monitoring Report with critical highlights.
     v4.4.1 - 2026-04-07 07:05 PM: [FIX] Simplified quiz rules UI for better mobile/screen fit. Fixed 'Start Quiz' button wiring issue. Added periodic heartbeat to MonitorService to ensure students appear in 'Class Activity' monitor.
@@ -77,7 +78,7 @@
 
         // STANDALONE CONFIGURATION
         const STANDALONE_CONFIG = {
-            API_URL: localStorage.getItem('lumina_api_url') || "https://script.google.com/macros/s/AKfycbx4NiM_uCT0ys02SsqnrBcK6hopFk6sKfoMDl04_b2EC0kA_V-NSsMbL_lBxYcNt34/exec",
+            API_URL: localStorage.getItem('lumina_api_url') || "",
             isStandalone: !window.location.hostname.includes('google.com'),
             MAX_UPLOAD_SIZE: 35 * 1024 * 1024 // 35MB safely accounts for Base64 overhead (33%) under 50MB GAS limit
         };
@@ -7143,6 +7144,11 @@
                             }
                         });
 
+                        // Final DOM Attachment
+                        modal.innerHTML = '';
+                        modal.appendChild(qEl);
+                        
+                        // ATTACH LISTENERS AFTER APPENDING TO DOM
                         document.getElementById('prev-q').onclick = () => {
                             currentQ--;
                             renderQ();
@@ -7158,9 +7164,6 @@
                                 renderQ();
                             }
                         };
-
-                        modal.innerHTML = '';
-                        modal.appendChild(qEl);
                     };
 
                     // ---- GLOBAL TIMER WRAPPER ----
