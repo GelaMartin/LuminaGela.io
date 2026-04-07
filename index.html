@@ -1,9 +1,9 @@
 <!--
+    v4.2.2 - 2026-04-07 03:16 PM: [FIX] Strictly filtered Class Activity to only show currently online (LIVE) students for real-time monitoring.
+    v4.2.1 - 2026-04-07 03:08 PM: [FIX] Removed hardcoded API_URL fallback to prevent content mirroring when sharing the standalone HTML file.
+    v4.2.0 - 2026-04-07 12:36 PM: [FEATURE] Refactored quiz timer to use a single constant (QUIZ_DURATION) for easier updates; increased default time to 60s.
     v4.1.0 - 2026-04-07 11:42 AM: [FIX] Restored Class Results modal by implementing strict ID sanitization (trimming) and returning the full student roster to the teacher state.
     v4.0.9 - 2026-04-07 11:27 AM: [FEATURE] Removed "Exit Quiz" button to prevent premature assessment termination and maintain test integrity.
-    v4.0.8 - 2026-04-07 11:25 AM: [FIX] Resolved SyntaxError (unexpected token ')') in Class Activity mapping logic.
-    v4.0.7 - 2026-04-07 11:22 AM: [FIX] Resolved SyntaxError in Class Activity modal that was causing a script crash on startup.
-    v4.0.6 - 2026-04-07 11:15 AM: [FIX] Resolved "Anonymous" student names in Class Activity by mapping user IDs to real registered names from the database.
 -->
 <!DOCTYPE html>
 <html lang="en">
@@ -11,7 +11,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Lumina v4.1.0</title>
+    <title>Lumina v4.2.2</title>
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -4709,8 +4709,10 @@
                                     String(os.userId).trim() === uId && 
                                     String(os.moduleId).trim() === cleanModId
                                 );
-                                students.push({ id: uId, ...entry, isLive: isOnlineHere });
-                                processedUserIds.add(uId);
+                                if (isOnlineHere) {
+                                    students.push({ id: uId, ...entry, isLive: true });
+                                    processedUserIds.add(uId);
+                                }
                             }
                         }
                         
@@ -4743,7 +4745,7 @@
                         if (!content) return;
                         
                         if (students.length === 0) {
-                            content.innerHTML = `<div class="text-center py-20 text-slate-400 italic">No activity recorded for this module yet.</div>`;
+                            content.innerHTML = `<div class="text-center py-20 text-slate-400 italic">No online students are currently tracking this module.</div>`;
                             return;
                         }
 
@@ -6909,6 +6911,7 @@
                 launchQuizInterface(modId, baselinePhoto = null, existingStream = null) {
                     const mod = app.state.data.modules.find(m => m.id === modId);
                     const modType = mod ? (mod.modType || 'Quiz') : 'Quiz';
+                    const QUIZ_DURATION = 60; // Single source of truth for the timer (in seconds)
 
                     app.state.currentActivity = {
                         moduleId: modId,
@@ -7031,14 +7034,14 @@
                         const qEl = document.createElement('div');
                         qEl.className = "bg-white w-full max-w-md max-h-[90vh] flex flex-col rounded-2xl p-6 shadow-2xl relative overflow-hidden animate-[scaleIn_0.3s_ease]";
 
-                        timeRemaining = 50;
+                        timeRemaining = QUIZ_DURATION;
 
                         qEl.innerHTML = `
                                 <div class="flex justify-between items-center mb-4 text-xs font-bold text-slate-400 uppercase tracking-wider shrink-0">
                                     <span>Question ${currentQ + 1}/${quizData.length}</span>
                                     <div class="flex items-center gap-2 text-brand-600 bg-brand-50 px-3 py-1 rounded-full">
                                         <i class="ph-bold ph-timer"></i>
-                                        <span id="timer-display">50</span>s
+                                        <span id="timer-display">${QUIZ_DURATION}</span>s
                                     </div>
                                     <div class="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-red-50 text-red-600 animate-pulse">
                                         <div class="w-2 h-2 rounded-full bg-red-600"></div>
@@ -7139,7 +7142,7 @@
                                     </li>
                                     <li class="flex items-start gap-3">
                                         <i class="ph-fill ph-check-circle text-brand-500 mt-1 text-lg"></i>
-                                        <span class="text-sm text-slate-700 font-medium"><strong>Time Limit:</strong> You have <strong>50 seconds</strong> per question! You cannot go back to previous questions.</span>
+                                        <span class="text-sm text-slate-700 font-medium"><strong>Time Limit:</strong> You have <strong>${QUIZ_DURATION} seconds</strong> per question! You cannot go back to previous questions.</span>
                                     </li>
                                 </ul>
                                 
