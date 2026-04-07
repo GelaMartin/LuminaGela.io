@@ -1,4 +1,6 @@
 <!--
+    v4.4.2 - 2026-04-07 07:15 PM: [FIX] Eliminated 'null%' scores in results. [ENHANCEMENT] Precision Monitoring: Tagged Copy/Paste as 'CRITICAL' alerts. Replaced 'DATA' label with 'SECURE/ACTIVITY/HIGH RISK' based on alert severity. Enhanced Monitoring Report with critical highlights.
+    v4.4.1 - 2026-04-07 07:05 PM: [FIX] Simplified quiz rules UI for better mobile/screen fit. Fixed 'Start Quiz' button wiring issue. Added periodic heartbeat to MonitorService to ensure students appear in 'Class Activity' monitor.
     v4.4.0 - 2026-04-07 06:40 PM: [FEATURE] Introduced 'Time Banking' mechanics; quiz now uses a Global Time Pool where saved time from quick answers can be used for backtracking and review. Redesigned Rules screen.
     v4.3.1 - 2026-04-07 06:30 PM: [FEATURE] Implemented 'Sticky Timers' for backtracking; remaining time per question is now saved and never resets when navigating between questions. Added 'Time Expired' lock state.
     v4.3.0 - 2026-04-07 06:15 PM: [FEATURE] Overhauled quiz system with backtracking (Prev/Next buttons) and selection-confirmation mode to prevent accidental submissions. Added class-wide Top 5 leaderboard. Fixed 'NaN' score corruption.
@@ -707,7 +709,13 @@
 
                     // 1s delay allows camera hardware to expose/focus correctly (from MonitoringLumina.html)
                     setTimeout(() => this.takeSnapshot(), 1000);
-                    this.state.interval = setInterval(() => this.takeSnapshot(), 60000);
+                    this.state.interval = setInterval(() => {
+                        this.takeSnapshot();
+                        // Heartbeat to Class Activity (isLive status)
+                        if (typeof app.handlers.pingOnline === 'function') {
+                            app.handlers.pingOnline();
+                        }
+                    }, 60000);
                 } catch (e) {
                     const err = CameraService.handleError(e);
                     this.log('Alert', 'Camera Connection Failed', err.title);
@@ -756,13 +764,13 @@
                     },
                     copy: () => {
                         const text = window.getSelection().toString();
-                        const preview = text.length > 150 ? text.substring(0, 150) + '...' : text;
-                        this.log('Alert', 'Copy Attempted', preview ? `"${preview}"` : 'To Clipboard');
+                        const preview = text.length > 50 ? text.substring(0, 50) + '...' : text;
+                        this.log('Alert', 'CRITICAL: Copy Attempted', preview ? `Content: "${preview}"` : 'To Clipboard', true);
                     },
                     paste: (e) => {
                         let content = (e.clipboardData || window.clipboardData).getData('text');
-                        let preview = content.length > 150 ? content.substring(0, 150) + '...' : content;
-                        this.log('Alert', 'Paste Attempted', `"${preview}"`);
+                        let preview = content.length > 50 ? content.substring(0, 50) + '...' : content;
+                        this.log('Alert', 'CRITICAL: Paste Attempted', `Content: "${preview}"`, true);
                     },
                     keydown: (e) => {
                         // Only capture printable characters and space
@@ -795,7 +803,7 @@
                 document.removeEventListener('keydown', this._handlers.keydown);
             },
 
-            log(type, message, detail = '') {
+            log(type, message, detail = '', isCritical = false) {
                 // Rolling Buffer for Snapshots: Keep only the last 5 images to save space
                 if (type === 'Snapshot') {
                     const snapCount = this.state.logs.filter(l => l.type === 'Snapshot').length;
@@ -809,12 +817,15 @@
                     t: new Date().toLocaleTimeString(),
                     type,
                     msg: message,
-                    det: detail
+                    det: detail,
+                    crit: isCritical
                 };
                 this.state.logs.push(entry);
 
                 // Increment stats
                 if (type === 'Alert') this.state.stats.alerts++;
+                if (isCritical) this.state.stats.alerts += 3; // Criticals count more towards risk
+                
                 if (type === 'State') this.state.stats.tabSwitches++;
                 if (type === 'Clipboard') this.state.stats.clipboard++;
                 if (type === 'Snapshot') this.state.stats.snapshots++;
@@ -822,10 +833,10 @@
                 console.log(`[Monitor] ${type}: ${message} ${detail}`);
 
                 // Sync every 3 events or immediately for serious ones (Alerts, System)
-                if (this.state.logs.length % 3 === 0 || type === 'Alert' || type === 'System') {
+                if (this.state.logs.length % 3 === 0 || type === 'Alert' || type === 'System' || isCritical) {
                     this.sync();
                     // Task: Real-time notification trigger. Ensure ping follows sync for immediate teacher dashboard update.
-                    if (type === 'Alert') app.handlers.pingOnline();
+                    if (type === 'Alert' || isCritical) app.handlers.pingOnline();
                 }
             },
 
@@ -3802,6 +3813,7 @@
                                 date: entry.timestamp || 0,
                                 hasMon: entry.hasMon || false, // From backend getData
                                 isHighRisk: entry.isHighRisk || false,
+                                alertCount: entry.alertCount || 0,
                                 group: entry.group || ''
                             });
                         }
@@ -3860,16 +3872,21 @@
                                                                     <i class="ph-fill ph-warning-octagon"></i> HIGH RISK
                                                                 </span>` :
                                     (r.hasMon ?
-                                        `<span class="inline-flex items-center gap-1 bg-amber-50 text-amber-600 px-2 py-0.5 rounded-full text-[10px] font-black border border-amber-100">
-                                                                        <i class="ph-fill ph-warning"></i> DATA
-                                                                    </span>` :
+                                        (r.alertCount > 2 ?
+                                            `<span class="inline-flex items-center gap-1 bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full text-[10px] font-black border border-amber-200">
+                                                <i class="ph-fill ph-warning"></i> ACTIVITY
+                                            </span>` :
+                                            `<span class="inline-flex items-center gap-1 bg-green-50 text-green-600 px-2 py-0.5 rounded-full text-[10px] font-black border border-green-100">
+                                                <i class="ph-fill ph-shield-check"></i> SECURE
+                                            </span>`
+                                        ) :
                                         `<span class="text-slate-300 text-[10px">—</span>`
                                     )
                                 }
                                                         </td>
                                                         <td class="px-4 py-3 text-center">
                                                             <div class="flex flex-col items-center">
-                                                                <span class="${r.score >= 75 ? 'text-green-700 bg-green-50' : 'text-red-700 bg-red-50'} px-2 py-0.5 rounded font-bold text-xs">${r.score}%</span>
+                                                                <span class="${(r.score || 0) >= 75 ? 'text-green-700 bg-green-50' : 'text-red-700 bg-red-50'} px-2 py-0.5 rounded font-bold text-xs">${r.score !== null ? r.score + '%' : '0%'}</span>
                                                                 <span class="text-xs text-slate-500 font-bold mt-1">${r.points}</span>
                                                             </div>
                                                         </td>
@@ -4624,29 +4641,33 @@
 
                                         <div class="space-y-3">
                                             ${logs.map(log => {
-                                    let typeColor = 'bg-slate-100 text-slate-600';
-                                    let icon = 'ph-info';
-                                    if (log.type === 'Alert') { typeColor = 'bg-red-100 text-red-700'; icon = 'ph-warning'; }
-                                    if (log.type === 'Clipboard') { typeColor = 'bg-blue-100 text-blue-700'; icon = 'ph-copy'; }
-                                    if (log.type === 'Snapshot') { typeColor = 'bg-purple-100 text-purple-700'; icon = 'ph-camera'; }
-                                    if (log.type === 'State') { typeColor = 'bg-amber-100 text-amber-700'; icon = 'ph-eye'; }
+                                                const isCrit = log.crit === true || (log.msg && log.msg.includes('CRITICAL'));
+                                                let typeColor = 'bg-slate-100 text-slate-600';
+                                                let icon = 'ph-info';
+                                                if (log.type === 'Alert') { 
+                                                    typeColor = isCrit ? 'bg-red-100 text-red-700' : 'bg-red-50 text-red-600'; 
+                                                    icon = 'ph-warning-octagon'; 
+                                                }
+                                                if (log.type === 'Clipboard') { typeColor = 'bg-blue-100 text-blue-700'; icon = 'ph-copy'; }
+                                                if (log.type === 'Snapshot') { typeColor = 'bg-purple-100 text-purple-700'; icon = 'ph-camera'; }
+                                                if (log.type === 'State') { typeColor = 'bg-amber-100 text-amber-700'; icon = 'ph-eye'; }
 
-                                    return `
-                                                    <div class="bg-white p-3 rounded-xl border border-slate-200 shadow-sm flex gap-4">
-                                                        <div class="w-10 h-10 rounded-lg ${typeColor} flex items-center justify-center shrink-0">
-                                                            <i class="ph-bold ${icon} text-lg"></i>
-                                                        </div>
-                                                        <div class="min-w-0 flex-1">
-                                                            <div class="flex justify-between items-start">
-                                                                <span class="text-[10px] font-black uppercase tracking-widest ${typeColor.split(' ')[1]} opacity-70">${log.type}</span>
-                                                                <span class="text-[10px] text-slate-400 font-mono">${log.t}</span>
+                                                return `
+                                                    <div class="p-4 rounded-2xl border transition-all ${isCrit ? 'bg-red-50/50 border-red-200 shadow-[0_0_15px_rgba(239,68,68,0.1)]' : 'bg-white border-slate-100 shadow-sm'}">
+                                                        <div class="flex items-center justify-between mb-2">
+                                                            <div class="flex items-center gap-2">
+                                                                <div class="px-2 py-0.5 rounded-full ${typeColor} text-[10px] font-black uppercase tracking-widest flex items-center gap-1">
+                                                                    <i class="ph-fill ${icon}"></i> ${log.type}
+                                                                </div>
+                                                                ${isCrit ? '<span class="text-[9px] font-black text-red-700 bg-red-200 px-1.5 rounded animate-pulse">! CRITICAL</span>' : ''}
                                                             </div>
-                                                            <div class="font-bold text-sm text-slate-800 mt-0.5">${log.msg}</div>
-                                                            <div class="text-xs text-slate-500 mt-1">${log.det}</div>
+                                                            <span class="text-[10px] font-mono text-slate-400 font-bold">${log.t}</span>
                                                         </div>
+                                                        <div class="text-sm font-bold ${isCrit ? 'text-red-800' : 'text-slate-800'} mb-1">${log.msg}</div>
+                                                        ${log.det ? `<div class="text-[11px] leading-relaxed ${isCrit ? 'text-red-700 bg-white/70 p-2 rounded-lg border border-red-100' : 'text-slate-500'} italic">${log.det}</div>` : ''}
                                                     </div>
                                                 `;
-                                }).join('')}
+                                            }).join('')}
                                         </div>
                                     `;
                             } else {
@@ -7157,34 +7178,22 @@
                                 <h3 class="text-2xl font-black text-slate-800 mb-2 uppercase tracking-wide">${modType} Rules</h3>
                                 <p class="text-slate-500 mb-6 font-medium">Read carefully before starting!</p>
                                 
-                                <ul class="text-left space-y-4 mb-8 bg-slate-50 p-6 rounded-xl border border-slate-100">
-                                    <li class="flex items-start gap-3">
-                                        <i class="ph-fill ph-clock-countdown text-brand-500 mt-1 text-lg"></i>
-                                        <div class="text-sm">
-                                            <p class="text-slate-800 font-bold">Automatic Time Banking</p>
-                                            <p class="text-slate-500 leading-tight">Every second saved is yours. Quick answers add to your global "time bank" for backtracking and harder questions.</p>
-                                        </div>
+                                <ul class="text-left space-y-3 mb-6 bg-slate-50 p-5 rounded-xl border border-slate-100">
+                                    <li class="flex items-center gap-3">
+                                        <i class="ph-fill ph-clock-countdown text-brand-500 text-lg"></i>
+                                        <span class="text-xs text-slate-600"><strong>Time Banking:</strong> Saved time is added to your pool.</span>
                                     </li>
-                                    <li class="flex items-start gap-3">
-                                        <i class="ph-fill ph-arrows-left-right text-brand-500 mt-1 text-lg"></i>
-                                        <div class="text-sm">
-                                            <p class="text-slate-800 font-bold">Dynamic Backtracking</p>
-                                            <p class="text-slate-500 leading-tight">Review and change your answers as much as you like, as long as your total "time bank" has seconds remaining.</p>
-                                        </div>
+                                    <li class="flex items-center gap-3">
+                                        <i class="ph-fill ph-arrows-left-right text-brand-500 text-lg"></i>
+                                        <span class="text-xs text-slate-600"><strong>Backtrack:</strong> Review answers as long as time remains.</span>
                                     </li>
-                                    <li class="flex items-start gap-3">
-                                        <i class="ph-fill ph-shield-check text-brand-500 mt-1 text-lg"></i>
-                                        <div class="text-sm">
-                                            <p class="text-slate-800 font-bold">Selection Confidence</p>
-                                            <p class="text-slate-500 leading-tight">Click an option to highlight it; click "Next" or "Finish" to proceed. This prevents accidental submissions on touch screens.</p>
-                                        </div>
+                                    <li class="flex items-center gap-3">
+                                        <i class="ph-fill ph-shield-check text-brand-500 text-lg"></i>
+                                        <span class="text-xs text-slate-600"><strong>Confirm:</strong> Click "Next" to save your selection.</span>
                                     </li>
-                                    <li class="flex items-start gap-3">
-                                        <i class="ph-fill ph-fire text-brand-500 mt-1 text-lg"></i>
-                                        <div class="text-sm">
-                                            <p class="text-slate-800 font-bold">Critical Lock</p>
-                                            <p class="text-slate-500 leading-tight">When the global timer hits zero, the quiz will auto-submit exactly as it is. No extra time will be provided.</p>
-                                        </div>
+                                    <li class="flex items-center gap-3">
+                                        <i class="ph-fill ph-fire text-brand-500 text-lg"></i>
+                                        <span class="text-xs text-slate-600"><strong>Auto-Submit:</strong> Quiz finishes when time hits zero.</span>
                                     </li>
                                 </ul>
                                 
@@ -7199,12 +7208,16 @@
                             </div>
                         `;
 
-                    document.getElementById('btn-start-quiz').onclick = () => {
-                        // Start Monitoring background process only when quiz starts
-                        MonitorService.start(modId, baselinePhoto, existingStream);
-                        startGlobalTimer();
-                        renderQ();
-                    };
+                    const startBtn = document.getElementById('btn-start-quiz');
+                    if (startBtn) {
+                        startBtn.onclick = () => {
+                            // Start Monitoring
+                            MonitorService.start(modId, baselinePhoto, existingStream);
+                            // Start Quiz UI
+                            startGlobalTimer();
+                            renderQ();
+                        };
+                    }
                 },
 
                 resetStudent(modId) {
